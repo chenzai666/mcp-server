@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 我们的 MCP 主服务
   mcp-web-tools:
@@ -10,19 +8,19 @@ services:
     restart: always
     environment:
       - TZ=Asia/Shanghai
-      - SEARXNG_URL=http://searxng:18080/search  # 指向下方内网容器
+      - SEARXNG_URL=http://searxng:18080/search
       - JINA_API_KEY=               # (可选) 填入你的 Jina API Key 提升限额
     depends_on:
       - searxng
 
   # 本地 SearXNG 聚合搜索引擎
   searxng:
-    image: searxng/searxng:latest
+    image: docker.io/searxng/searxng  # 加上 docker.io 强制从官方拉取，去掉了容易报错的 :latest 标签
     container_name: searxng
     restart: always
     ports:
       - "18080:8080"
     environment:
-      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_BASE_URL=http://localhost:18080/
       - SEARXNG_SECRET=mcp_searxng_secret_2026
-      - SEARXNG_SEARCH_FORMATS=html,json   # 关键：开启 JSON API
+      - SEARXNG_SEARCH_FORMATS=html,json
