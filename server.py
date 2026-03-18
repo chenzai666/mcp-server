@@ -14,7 +14,7 @@ import uvicorn
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Request
 from markdownify import markdownify as html_to_markdown
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
 from PIL import Image
 from pypdf import PdfReader
