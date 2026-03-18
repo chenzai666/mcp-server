@@ -31,7 +31,7 @@ services:
       - searxng
 
   searxng:
-    image: docker.io/searxng/searxng:latest
+    image: ghcr.io/searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
     ports:
