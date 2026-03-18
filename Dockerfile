@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM debian:bookworm-slim
 
 # 安装系统依赖和 Python
