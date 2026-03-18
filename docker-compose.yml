@@ -1,26 +1,48 @@
 services:
-  # 我们的 MCP 主服务
   mcp-web-tools:
     build: .
     container_name: mcp-server
+    restart: unless-stopped
     ports:
       - "59795:59795"
-    restart: always
     environment:
-      - TZ=Asia/Shanghai
-      - SEARXNG_URL=http://searxng:18080/search
-      - JINA_API_KEY=               # (可选) 填入你的 Jina API Key 提升限额
+      TZ: Asia/Shanghai
+      PORT: 59795
+      # MCP 鉴权 Token，Cherry Studio 连接时要放到 Authorization 请求头里
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-Bearer mcp_admin_secret_2026}
+      # SearXNG 本地搜索服务地址
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080/search}
+      # 搜索后端优先级，已内置 Tavily
+      SEARCH_BACKENDS: ${SEARCH_BACKENDS:-tavily,searxng,duckduckgo}
+      # Tavily API Key，可选。配置后 web_search / search_agent 会优先调用 Tavily
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      TAVILY_TOPIC: ${TAVILY_TOPIC:-general}
+      # Jina Reader / Vision，可选
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      # OCR 语言，默认英文 + 简体中文
+      OCR_LANG: ${OCR_LANG:-eng+chi_sim}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-20}
+      # 外部视觉服务，可选。配置后 image_describe 会优先走这个服务
+      VISION_API_URL: ${VISION_API_URL:-}
+      VISION_API_KEY: ${VISION_API_KEY:-}
+      # GitHub Token，可选。用于 search_agent 提高 GitHub API 限额
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     depends_on:
       - searxng
 
-  # 本地 SearXNG 聚合搜索引擎
   searxng:
-    image: docker.io/searxng/searxng  # 加上 docker.io 强制从官方拉取，去掉了容易报错的 :latest 标签
+    image: docker.io/searxng/searxng:latest
     container_name: searxng
-    restart: always
+    restart: unless-stopped
     ports:
       - "18080:8080"
     environment:
-      - SEARXNG_BASE_URL=http://localhost:18080/
-      - SEARXNG_SECRET=mcp_searxng_secret_2026
-      - SEARXNG_SEARCH_FORMATS=html,json
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:18080/}
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-mcp_searxng_secret_2026}
+      UWSGI_THREADS: 4
+      UWSGI_WORKERS: 2
+    volumes:
+      - searxng_config:/etc/searxng
+
+volumes:
+  searxng_config:
