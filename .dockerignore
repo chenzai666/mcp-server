@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+.venv
+venv
+data
+tmp
+cache
+node_modules
+dist
+build
+*.zip
