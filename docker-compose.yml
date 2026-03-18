@@ -11,7 +11,7 @@ services:
       # MCP 鉴权 Token，Cherry Studio 连接时要放到 Authorization 请求头里
       ADMIN_TOKEN: ${ADMIN_TOKEN:-Bearer mcp_admin_secret_2026}
       # SearXNG 本地搜索服务地址
-      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080/search}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:18080/search}
       # 搜索后端优先级，已内置 Tavily
       SEARCH_BACKENDS: ${SEARCH_BACKENDS:-tavily,searxng,duckduckgo}
       # Tavily API Key，可选。配置后 web_search / search_agent 会优先调用 Tavily
