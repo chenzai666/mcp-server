@@ -13,34 +13,42 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# 显式关闭 pip 的 hash 强校验，避免宿主机或基础环境继承的配置影响构建
+# pip 相关环境变量
 ENV PIP_REQUIRE_HASHES=0
-
-# 关闭 pip 版本检查，减少无意义输出
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_DEFAULT_TIMEOUT=120
+ENV PIP_RETRIES=10
+ENV PIP_PROGRESS_BAR=off
 
-# 更新 pip 到最新版本
-RUN python3 -m pip install --upgrade pip
-
-# 添加非 root 用户，避免权限问题
-RUN useradd -m myuser
-USER myuser
-
-# 设置工作目录
+# 创建应用目录
 WORKDIR /app
+
+# 先创建虚拟环境
+RUN python3 -m venv /opt/venv
+
+# 让后续命令默认使用虚拟环境里的 python / pip
+ENV PATH="/opt/venv/bin:$PATH"
 
 # 先复制依赖文件，最大化利用缓存
 COPY requirements.txt /app/requirements.txt
 
-# 升级 pip 基础工具，清理缓存，再安装项目依赖
-RUN python3 -m pip install --upgrade pip setuptools wheel --break-system-packages \
-    && python3 -m pip install --no-cache-dir --isolated \
+# 在虚拟环境里升级 pip 并安装依赖
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir --isolated \
        -i https://pypi.tuna.tsinghua.edu.cn/simple \
-       -r /app/requirements.txt \
-       --break-system-packages
+       -r /app/requirements.txt
 
 # 再复制代码
 COPY . /app
 
+# 创建非 root 用户
+RUN useradd -m appuser \
+    && chown -R appuser:appuser /app /opt/venv
+
+# 切换到非 root 用户运行
+USER appuser
+
 EXPOSE 59795
-CMD ["python3", "server.py"]
+
+# 启动服务
+CMD ["python", "server.py"]
