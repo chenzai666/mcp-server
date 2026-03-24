@@ -1,0 +1,44 @@
+services:
+  mcp-web-tools:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: mcp-server-dev
+    restart: unless-stopped
+    ports:
+      - "59795:59795"
+    environment:
+      TZ: Asia/Shanghai
+      PORT: 59795
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-Bearer mcp_admin_secret_2026}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:18080/search}
+      SEARCH_BACKENDS: ${SEARCH_BACKENDS:-tavily,searxng,duckduckgo}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      TAVILY_TOPIC: ${TAVILY_TOPIC:-general}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      OCR_LANG: ${OCR_LANG:-eng+chi_sim}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-20}
+      VISION_API_URL: ${VISION_API_URL:-}
+      VISION_API_KEY: ${VISION_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - .:/app
+    depends_on:
+      - searxng
+
+  searxng:
+    image: ghcr.io/searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "18080:8080"
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:18080/}
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-mcp_searxng_secret_2026}
+      UWSGI_THREADS: 4
+      UWSGI_WORKERS: 2
+    volumes:
+      - searxng_config:/etc/searxng
+
+volumes:
+  searxng_config:
