@@ -21,8 +21,10 @@
 ## 目录说明
 
 - `server.py`：主服务代码，已尽量使用中文注释
-- `Dockerfile`：镜像构建文件
-- `docker-compose.yml`：编排文件，默认暴露 `59795`
+- `Dockerfile`：镜像构建文件（生产环境）
+- `Dockerfile.dev`：开发环境镜像，支持热加载
+- `docker-compose.yml`：编排文件（生产环境）
+- `docker-compose.dev.yml`：开发环境编排文件，支持代码热加载
 - `.env.example`：环境变量模板
 - `requirements.txt`：Python 依赖
 
@@ -32,7 +34,11 @@
 cp .env.example .env
 # 按需修改 ADMIN_TOKEN、TAVILY_API_KEY、SEARXNG_SECRET
 
+# 生产模式
 docker compose up -d --build
+
+# 开发模式（代码热加载，首次需要 build，后续修改代码自动重载）
+docker compose -f docker-compose.dev.yml up -d --build
 ```
 
 ## 健康检查
