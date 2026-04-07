@@ -51,10 +51,15 @@ JINA_API_KEY = os.getenv("JINA_API_KEY", "").strip()
 
 # OCR 相关配置
 OCR_LANG = os.getenv("OCR_LANG", "eng+chi_sim")
+OCR_BACKEND = os.getenv("OCR_BACKEND", "paddleocr").strip().lower()
+PADDLEOCR_LANG = os.getenv("PADDLEOCR_LANG", "ch").strip()
 
 # 外部视觉服务配置，可选
 VISION_API_URL = os.getenv("VISION_API_URL", "").strip()
 VISION_API_KEY = os.getenv("VISION_API_KEY", "").strip()
+
+# PaddleOCR 实例（延迟加载）
+_paddleocr_instance = None
 
 # GitHub 可选 Token，提高匿名访问速率限制
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
@@ -64,6 +69,26 @@ HEADERS = {"User-Agent": USER_AGENT}
 mcp = FastMCP("Web-Tools-Server")
 # SSE 模式下，客户端通过 /sse 建立长连接，再通过 /messages/ 发起请求
 transport = SseServerTransport("/messages/")
+
+
+def _get_paddleocr():
+    """延迟加载 PaddleOCR 实例。"""
+    global _paddleocr_instance
+    if _paddleocr_instance is None and OCR_BACKEND == "paddleocr":
+        try:
+            from paddleocr import PaddleOCR
+            _paddleocr_instance = PaddleOCR(
+                lang=PADDLEOCR_LANG,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+                show_log=False,
+            )
+            logger.info(f"PaddleOCR initialized with lang={PADDLEOCR_LANG}")
+        except Exception as exc:
+            logger.warning(f"Failed to initialize PaddleOCR: {exc}")
+            _paddleocr_instance = False
+    return _paddleocr_instance if _paddleocr_instance else None
 
 
 def _request(url: str, **kwargs) -> requests.Response:
@@ -778,11 +803,32 @@ def jina_reader(url: str) -> str:
 
 @mcp.tool()
 def image_ocr(image_url: str, lang: Optional[str] = None) -> str:
-    """从图片中识别文字，适合截图、海报、扫描件。"""
+    """从图片中识别文字，支持 PaddleOCR 和 Tesseract。默认使用 PaddleOCR（中文效果更好）。"""
     try:
         r = _request(image_url, stream=True)
         r.raise_for_status()
-        img = Image.open(io.BytesIO(r.content))
+        img_bytes = r.content
+        
+        if OCR_BACKEND == "paddleocr":
+            ocr = _get_paddleocr()
+            if ocr:
+                import tempfile
+                import os as _os
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp.write(img_bytes)
+                    tmp_path = tmp.name
+                try:
+                    result = ocr.ocr(tmp_path, cls=False)
+                    texts = []
+                    if result and result[0]:
+                        for line in result[0]:
+                            if line and len(line) >= 2:
+                                texts.append(line[1][0])
+                    return "\n".join(texts) if texts else "No text found in image."
+                finally:
+                    _os.unlink(tmp_path)
+        
+        img = Image.open(io.BytesIO(img_bytes))
         text = pytesseract.image_to_string(img, lang=lang or OCR_LANG)
         return text.strip() or "No text found in image."
     except Exception as exc:
@@ -803,11 +849,34 @@ def image_describe(image_url: str, prompt: str = "请描述这张图片的主要
             response.raise_for_status()
             return _truncate(_normalize_whitespace(str(response.json())))
 
-        # 没有视觉服务时，至少返回图片基本信息和 OCR 结果
         r = _request(image_url, stream=True)
         r.raise_for_status()
-        img = Image.open(io.BytesIO(r.content))
-        ocr_text = pytesseract.image_to_string(img, lang=OCR_LANG).strip()
+        img_bytes = r.content
+        img = Image.open(io.BytesIO(img_bytes))
+        
+        ocr_text = ""
+        if OCR_BACKEND == "paddleocr":
+            ocr = _get_paddleocr()
+            if ocr:
+                import tempfile
+                import os as _os
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp.write(img_bytes)
+                    tmp_path = tmp.name
+                try:
+                    result = ocr.ocr(tmp_path, cls=False)
+                    texts = []
+                    if result and result[0]:
+                        for line in result[0]:
+                            if line and len(line) >= 2:
+                                texts.append(line[1][0])
+                    ocr_text = "\n".join(texts)
+                finally:
+                    _os.unlink(tmp_path)
+        
+        if not ocr_text:
+            ocr_text = pytesseract.image_to_string(img, lang=OCR_LANG).strip()
+        
         return _truncate(
             _normalize_whitespace(
                 f"当前未配置外部视觉服务。\n"
@@ -930,6 +999,8 @@ def health_check():
         "search_backends": SEARCH_BACKENDS,
         "serp_engines": SERP_ENGINES,
         "tavily_enabled": bool(TAVILY_API_KEY),
+        "ocr_backend": OCR_BACKEND,
+        "paddleocr_lang": PADDLEOCR_LANG,
         "features": [
             "web_fetch",
             "web_to_markdown",
