@@ -10,8 +10,8 @@
 - `search_agent`：多源聚合搜索（网页、百科、论文、代码仓库）
 - `web_extract_links`：提取网页链接
 - `web_extract_metadata`：提取网页元数据
-- `image_ocr`：图片 OCR
-- `image_describe`：图片描述（可对接外部视觉服务）
+- `image_ocr`：图片 OCR，支持 PaddleOCR（默认）和 Tesseract
+- `image_describe`：图片描述（可对接外部视觉服务，未配置时使用 PaddleOCR）
 - `jina_reader`：Jina 网页读取
 - `jina_vision`：Jina 图片读取
 - `pdf_read`：读取 PDF 文本
@@ -57,5 +57,14 @@ curl http://127.0.0.1:59795/health
 
 1. `web_search` 会按 `SEARCH_BACKENDS` 顺序搜索，推荐：`tavily,searxng,duckduckgo`
 2. 没有配置 `TAVILY_API_KEY` 时，会自动回退到后面的搜索后端
-3. `image_describe` 没配置 `VISION_API_URL` 时，会回退为“图片基础信息 + OCR 文本”模式
-4. `youtube_transcript` 依赖公开视频存在字幕
+3. `image_ocr` 默认使用 PaddleOCR，中文识别效果更好；可通过 `OCR_BACKEND=tesseract` 切换
+4. `image_describe` 没配置 `VISION_API_URL` 时，会回退为"图片基础信息 + OCR 文本"模式
+5. `youtube_transcript` 依赖公开视频存在字幕
+
+## OCR 配置
+
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `OCR_BACKEND` | OCR 引擎：`paddleocr` 或 `tesseract` | `paddleocr` |
+| `PADDLEOCR_LANG` | PaddleOCR 语言：`ch`（中英文）、`en`、`fr` 等 | `ch` |
+| `OCR_LANG` | Tesseract 语言（仅 Tesseract 模式） | `eng+chi_sim` |
