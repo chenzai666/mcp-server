@@ -801,81 +801,72 @@ def jina_reader(url: str) -> str:
         return f"Jina Reader Error: {exc}"
 
 
-@mcp.tool()
-def image_ocr(image_url: str, lang: Optional[str] = None) -> str:
-    """从图片中识别文字，支持 PaddleOCR 和 Tesseract。默认使用 PaddleOCR（中文效果更好）。"""
-    try:
+def _get_image_bytes(image_url: Optional[str] = None, image_base64: Optional[str] = None) -> bytes:
+    """从 URL 或 base64 获取图片字节。"""
+    if image_base64:
+        import base64
+        return base64.b64decode(image_base64)
+    if image_url:
         r = _request(image_url, stream=True)
         r.raise_for_status()
-        img_bytes = r.content
-        
-        if OCR_BACKEND == "paddleocr":
-            ocr = _get_paddleocr()
-            if ocr:
-                import tempfile
-                import os as _os
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                    tmp.write(img_bytes)
-                    tmp_path = tmp.name
-                try:
-                    result = ocr.ocr(tmp_path, cls=False)
-                    texts = []
-                    if result and result[0]:
-                        for line in result[0]:
-                            if line and len(line) >= 2:
-                                texts.append(line[1][0])
-                    return "\n".join(texts) if texts else "No text found in image."
-                finally:
-                    _os.unlink(tmp_path)
-        
-        img = Image.open(io.BytesIO(img_bytes))
-        text = pytesseract.image_to_string(img, lang=lang or OCR_LANG)
-        return text.strip() or "No text found in image."
+        return r.content
+    raise ValueError("必须提供 image_url 或 image_base64")
+
+
+def _ocr_image(img_bytes: bytes, lang: Optional[str] = None) -> str:
+    """对图片执行 OCR，返回识别文本。"""
+    if OCR_BACKEND == "paddleocr":
+        ocr = _get_paddleocr()
+        if ocr:
+            import tempfile
+            import os as _os
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp.write(img_bytes)
+                tmp_path = tmp.name
+            try:
+                result = ocr.ocr(tmp_path, cls=False)
+                texts = []
+                if result and result[0]:
+                    for line in result[0]:
+                        if line and len(line) >= 2:
+                            texts.append(line[1][0])
+                return "\n".join(texts) if texts else ""
+            finally:
+                _os.unlink(tmp_path)
+    
+    img = Image.open(io.BytesIO(img_bytes))
+    return pytesseract.image_to_string(img, lang=lang or OCR_LANG).strip()
+
+
+@mcp.tool()
+def image_ocr(image_url: Optional[str] = None, image_base64: Optional[str] = None, lang: Optional[str] = None) -> str:
+    """从图片中识别文字，支持 URL 或 base64 编码图片。默认使用 PaddleOCR（中文效果更好）。"""
+    try:
+        img_bytes = _get_image_bytes(image_url, image_base64)
+        text = _ocr_image(img_bytes, lang)
+        return text or "No text found in image."
     except Exception as exc:
         return f"OCR Error: {exc}"
 
 
 @mcp.tool()
-def image_describe(image_url: str, prompt: str = "请描述这张图片的主要内容") -> str:
-    """图片描述工具。优先调用外部视觉服务；未配置时回退到图片基础信息 + OCR。"""
+def image_describe(image_url: Optional[str] = None, image_base64: Optional[str] = None, prompt: str = "请描述这张图片的主要内容") -> str:
+    """图片描述工具，支持 URL 或 base64 编码图片。优先调用外部视觉服务；未配置时回退到图片基础信息 + OCR。"""
     try:
         if VISION_API_URL:
             headers = {"Authorization": f"Bearer {VISION_API_KEY}"} if VISION_API_KEY else {}
-            response = _post_json(
-                VISION_API_URL,
-                {"image_url": image_url, "prompt": prompt},
-                headers=headers,
-            )
+            payload = {"prompt": prompt}
+            if image_url:
+                payload["image_url"] = image_url
+            if image_base64:
+                payload["image_base64"] = image_base64
+            response = _post_json(VISION_API_URL, payload, headers=headers)
             response.raise_for_status()
             return _truncate(_normalize_whitespace(str(response.json())))
 
-        r = _request(image_url, stream=True)
-        r.raise_for_status()
-        img_bytes = r.content
+        img_bytes = _get_image_bytes(image_url, image_base64)
         img = Image.open(io.BytesIO(img_bytes))
-        
-        ocr_text = ""
-        if OCR_BACKEND == "paddleocr":
-            ocr = _get_paddleocr()
-            if ocr:
-                import tempfile
-                import os as _os
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                    tmp.write(img_bytes)
-                    tmp_path = tmp.name
-                try:
-                    result = ocr.ocr(tmp_path, cls=False)
-                    texts = []
-                    if result and result[0]:
-                        for line in result[0]:
-                            if line and len(line) >= 2:
-                                texts.append(line[1][0])
-                    ocr_text = "\n".join(texts)
-                finally:
-                    _os.unlink(tmp_path)
-        
-        if not ocr_text:
-            ocr_text = pytesseract.image_to_string(img, lang=OCR_LANG).strip()
+        ocr_text = _ocr_image(img_bytes)
         
         return _truncate(
             _normalize_whitespace(

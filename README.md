@@ -10,8 +10,8 @@
 - `search_agent`：多源聚合搜索（网页、百科、论文、代码仓库）
 - `web_extract_links`：提取网页链接
 - `web_extract_metadata`：提取网页元数据
-- `image_ocr`：图片 OCR，支持 PaddleOCR（默认）和 Tesseract
-- `image_describe`：图片描述（可对接外部视觉服务，未配置时使用 PaddleOCR）
+- `image_ocr`：图片 OCR，支持 URL 或 base64 编码图片，默认使用 PaddleOCR
+- `image_describe`：图片描述，支持 URL 或 base64 编码图片（可对接外部视觉服务）
 - `jina_reader`：Jina 网页读取
 - `jina_vision`：Jina 图片读取
 - `pdf_read`：读取 PDF 文本
