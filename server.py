@@ -54,6 +54,12 @@ OCR_LANG = os.getenv("OCR_LANG", "eng+chi_sim")
 OCR_BACKEND = os.getenv("OCR_BACKEND", "paddleocr").strip().lower()
 PADDLEOCR_LANG = os.getenv("PADDLEOCR_LANG", "ch").strip()
 
+# 百度 OCR 配置
+BAIDU_OCR_API_KEY = os.getenv("BAIDU_OCR_API_KEY", "").strip()
+BAIDU_OCR_SECRET_KEY = os.getenv("BAIDU_OCR_SECRET_KEY", "").strip()
+_baidu_access_token = None
+_baidu_token_expire_time = 0
+
 # 外部视觉服务配置，可选
 VISION_API_URL = os.getenv("VISION_API_URL", "").strip()
 VISION_API_KEY = os.getenv("VISION_API_KEY", "").strip()
@@ -69,6 +75,64 @@ HEADERS = {"User-Agent": USER_AGENT}
 mcp = FastMCP("Web-Tools-Server")
 # SSE 模式下，客户端通过 /sse 建立长连接，再通过 /messages/ 发起请求
 transport = SseServerTransport("/messages/")
+
+
+def _get_baidu_access_token():
+    """获取百度 OCR access_token，自动刷新。"""
+    global _baidu_access_token, _baidu_token_expire_time
+    import time
+    
+    if not BAIDU_OCR_API_KEY or not BAIDU_OCR_SECRET_KEY:
+        return None
+    
+    if _baidu_access_token and time.time() < _baidu_token_expire_time:
+        return _baidu_access_token
+    
+    try:
+        response = requests.post(
+            "https://aip.baidubce.com/oauth/2.0/token",
+            params={
+                "grant_type": "client_credentials",
+                "client_id": BAIDU_OCR_API_KEY,
+                "client_secret": BAIDU_OCR_SECRET_KEY,
+            },
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+        _baidu_access_token = data.get("access_token")
+        _baidu_token_expire_time = time.time() + data.get("expires_in", 86400) - 300
+        logger.info("Baidu OCR access token refreshed")
+        return _baidu_access_token
+    except Exception as exc:
+        logger.warning(f"Failed to get Baidu OCR token: {exc}")
+        return None
+
+
+def _baidu_ocr(img_bytes: bytes, language_type: str = "CHN_ENG") -> str:
+    """调用百度 OCR API 识别图片。"""
+    import base64
+    import urllib.parse
+    
+    token = _get_baidu_access_token()
+    if not token:
+        raise RuntimeError("Baidu OCR not configured or token fetch failed")
+    
+    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+    response = requests.post(
+        f"https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic?access_token={token}",
+        data={"image": img_base64, "language_type": language_type},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    result = response.json()
+    
+    if "error_code" in result:
+        raise RuntimeError(f"Baidu OCR error: {result.get('error_msg', result)}")
+    
+    words = result.get("words_result", [])
+    return "\n".join(item.get("words", "") for item in words)
 
 
 def _get_paddleocr():
@@ -815,6 +879,13 @@ def _get_image_bytes(image_url: Optional[str] = None, image_base64: Optional[str
 
 def _ocr_image(img_bytes: bytes, lang: Optional[str] = None) -> str:
     """对图片执行 OCR，返回识别文本。"""
+    if OCR_BACKEND == "baidu":
+        language_type = "CHN_ENG"
+        if lang:
+            lang_map = {"eng": "ENG", "ch": "CHN_ENG", "jap": "JAP", "kor": "KOR"}
+            language_type = lang_map.get(lang.lower(), "CHN_ENG")
+        return _baidu_ocr(img_bytes, language_type)
+    
     if OCR_BACKEND == "paddleocr":
         ocr = _get_paddleocr()
         if ocr:

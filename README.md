@@ -65,6 +65,19 @@ curl http://127.0.0.1:59795/health
 
 | 环境变量 | 说明 | 默认值 |
 |---------|------|--------|
-| `OCR_BACKEND` | OCR 引擎：`paddleocr` 或 `tesseract` | `paddleocr` |
+| `OCR_BACKEND` | OCR 引擎：`paddleocr`、`baidu` 或 `tesseract` | `paddleocr` |
 | `PADDLEOCR_LANG` | PaddleOCR 语言：`ch`（中英文）、`en`、`fr` 等 | `ch` |
+| `BAIDU_OCR_API_KEY` | 百度 OCR API Key（OCR_BACKEND=baidu 时需配置） | - |
+| `BAIDU_OCR_SECRET_KEY` | 百度 OCR Secret Key | - |
 | `OCR_LANG` | Tesseract 语言（仅 Tesseract 模式） | `eng+chi_sim` |
+
+### 百度 OCR 配置说明
+
+1. 访问 [百度智能云 OCR](https://cloud.baidu.com/product/ocr) 开通服务
+2. 在控制台创建应用，获取 API Key 和 Secret Key
+3. 设置环境变量：
+   ```
+   OCR_BACKEND=baidu
+   BAIDU_OCR_API_KEY=你的API_KEY
+   BAIDU_OCR_SECRET_KEY=你的SECRET_KEY
+   ```
