@@ -2,6 +2,8 @@ services:
   mcp-web-tools:
     build: .
     container_name: mcp-server
+    security_opt:
+      - apparmor:unconfined
     restart: unless-stopped
     ports:
       - "59795:59795"
