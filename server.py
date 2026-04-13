@@ -1081,6 +1081,11 @@ def health_check():
     }
 
 
+import asyncio
+import time as _time
+
+_SSE_KEEPALIVE_INTERVAL = 25  # 秒，大部分代理/负载均衡 30-60s 超时
+
 async def handle_sse(request: Request):
     """SSE 长连接入口。Cherry Studio 等客户端通过这里建立会话。"""
     _response_started = False
@@ -1096,11 +1101,36 @@ async def handle_sse(request: Request):
 
     async with transport.connect_sse(request.scope, request.receive, guarded_send) as streams:
         in_stream, out_stream = streams
-        await mcp._mcp_server.run(
-            in_stream,
-            out_stream,
-            mcp._mcp_server.create_initialization_options(),
-        )
+
+        async def _keepalive():
+            """定期发送 SSE 注释行，防止代理/客户端因空闲断开连接。"""
+            try:
+                while True:
+                    await asyncio.sleep(_SSE_KEEPALIVE_INTERVAL)
+                    try:
+                        await original_send({
+                            "type": "http.response.body",
+                            "body": b": keepalive\n\n",
+                            "more_body": True,
+                        })
+                    except Exception:
+                        break  # 连接已关闭
+            except asyncio.CancelledError:
+                pass
+
+        keepalive_task = asyncio.create_task(_keepalive())
+        try:
+            await mcp._mcp_server.run(
+                in_stream,
+                out_stream,
+                mcp._mcp_server.create_initialization_options(),
+            )
+        finally:
+            keepalive_task.cancel()
+            try:
+                await keepalive_task
+            except asyncio.CancelledError:
+                pass
 
 
 # /sse: 建立 SSE 长连接
