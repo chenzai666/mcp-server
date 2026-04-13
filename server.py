@@ -1083,7 +1083,18 @@ def health_check():
 
 async def handle_sse(request: Request):
     """SSE 长连接入口。Cherry Studio 等客户端通过这里建立会话。"""
-    async with transport.connect_sse(request.scope, request.receive, request._send) as streams:
+    _response_started = False
+    original_send = request._send
+
+    async def guarded_send(message):
+        nonlocal _response_started
+        if message["type"] == "http.response.start":
+            if _response_started:
+                return  # SSE 已发过响应，丢弃 Starlette 外层的重复响应
+            _response_started = True
+        await original_send(message)
+
+    async with transport.connect_sse(request.scope, request.receive, guarded_send) as streams:
         in_stream, out_stream = streams
         await mcp._mcp_server.run(
             in_stream,
