@@ -3,8 +3,10 @@ import logging
 import os
 import re
 import secrets
+import time as _time
 import urllib.parse
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -917,8 +919,6 @@ def health_check_detail():
 
 
 import asyncio
-import time as _time
-from collections import defaultdict
 
 _SSE_KEEPALIVE_INTERVAL = 15  # 秒，缩短到 15s 防止 30s 超时的代理误杀连接
 
