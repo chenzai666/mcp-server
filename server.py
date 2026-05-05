@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from markdownify import markdownify as html_to_markdown
 from fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
-from mcp.server.streamable_http import StreamableHTTPSessionManager
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from PIL import Image
 from pypdf import PdfReader
 from starlette.middleware.base import BaseHTTPMiddleware
