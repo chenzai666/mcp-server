@@ -1094,7 +1094,7 @@ def health_check():
 import asyncio
 import time as _time
 
-_SSE_KEEPALIVE_INTERVAL = 25  # 秒，大部分代理/负载均衡 30-60s 超时
+_SSE_KEEPALIVE_INTERVAL = 15  # 秒，缩短到 15s 防止 30s 超时的代理误杀连接
 
 async def handle_sse(request: Request):
     """SSE 长连接入口。Cherry Studio 等客户端通过这里建立会话。"""
@@ -1107,6 +1107,15 @@ async def handle_sse(request: Request):
             if _response_started:
                 return  # SSE 已发过响应，丢弃 Starlette 外层的重复响应
             _response_started = True
+            await original_send(message)
+            # 连接建立后立即告知客户端断线重连间隔（3 秒），
+            # 符合 SSE 规范的客户端会在断线后自动重连
+            await original_send({
+                "type": "http.response.body",
+                "body": b"retry: 3000\n\n",
+                "more_body": True,
+            })
+            return
         await original_send(message)
 
     async with transport.connect_sse(request.scope, request.receive, guarded_send) as streams:
