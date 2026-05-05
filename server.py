@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import pytesseract
 import requests
 import uvicorn
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Request
 from markdownify import markdownify as html_to_markdown
@@ -163,8 +164,14 @@ def _get_paddleocr():
     return _paddleocr_instance if _paddleocr_instance else None
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(requests.RequestException),
+    reraise=True,
+)
 def _request(url: str, **kwargs) -> requests.Response:
-    """统一的 GET 请求封装，自动合并公共请求头。"""
+    """统一的 GET 请求封装，网络错误自动重试最多 3 次（指数退避）。"""
     merged_headers = dict(HEADERS)
     extra_headers = kwargs.pop("headers", None)
     if extra_headers:
@@ -172,8 +179,14 @@ def _request(url: str, **kwargs) -> requests.Response:
     return requests.get(url, headers=merged_headers, timeout=TIMEOUT, **kwargs)
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(requests.RequestException),
+    reraise=True,
+)
 def _post_json(url: str, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> requests.Response:
-    """统一的 JSON POST 请求封装。"""
+    """统一的 JSON POST 请求封装，网络错误自动重试最多 3 次（指数退避）。"""
     merged_headers = dict(HEADERS)
     merged_headers["Content-Type"] = "application/json"
     if headers:
@@ -1015,12 +1028,37 @@ def tavily_extract(urls: List[str]) -> str:
 # HTTP 服务与鉴权
 # ------------------------------
 
+_RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "120"))  # 每 IP 每分钟最大请求数
+_rate_counters: dict = defaultdict(list)
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """滑动窗口速率限制，按客户端 IP 计数。"""
+
+    async def dispatch(self, request: Request, call_next):
+        ip = (request.client.host if request.client else "unknown")
+        now = _time.monotonic()
+        window_start = now - 60.0
+        bucket = _rate_counters[ip]
+        # 清理窗口外的旧记录
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        if len(bucket) >= _RATE_LIMIT_RPM:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded, retry after 60s"},
+                headers={"Retry-After": "60"},
+            )
+        bucket.append(now)
+        return await call_next(request)
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """简单 Bearer Token 鉴权。
 
     说明：
     - /health 和 / 允许匿名访问，方便健康检查。
-    - 其余包括 /sse 和 /messages/ 都要求带 Authorization。
+    - /health/detail 及其余端点均要求 Authorization。
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -1047,6 +1085,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MCP Advanced Web OSINT Server", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 
 @app.get("/")
@@ -1064,7 +1103,13 @@ async def index():
 
 @app.get("/health")
 def health_check():
-    """健康检查接口。"""
+    """公开健康检查，仅返回服务存活状态。"""
+    return {"status": "ok"}
+
+
+@app.get("/health/detail")
+def health_check_detail():
+    """详细健康信息（需鉴权，由 AuthMiddleware 保护）。"""
     return {
         "status": "ok",
         "port": PORT,
@@ -1093,6 +1138,7 @@ def health_check():
 
 import asyncio
 import time as _time
+from collections import defaultdict
 
 _SSE_KEEPALIVE_INTERVAL = 15  # 秒，缩短到 15s 防止 30s 超时的代理误杀连接
 
