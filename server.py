@@ -784,25 +784,28 @@ def _search_github(query: str, max_results: int = 3) -> List[Dict[str, str]]:
 # ------------------------------
 
 @mcp.tool()
-def web_fetch(url: str) -> str:
-    """读取网页正文，返回清洗后的文本内容。"""
+def web_read(url: str, format: str = "markdown") -> str:
+    """读取网页内容。
+
+    format 参数控制返回格式：
+    - "markdown"（默认）：转为 Markdown，保留结构，适合大多数场景
+    - "text"：纯文本，去除所有标签，适合只需正文的场景
+    - "jina"：经由 Jina Reader 提取，对复杂/动态页面效果更好（需配置 JINA_API_KEY）
+    """
     try:
+        if format == "jina":
+            headers = {"Authorization": f"Bearer {JINA_API_KEY}"} if JINA_API_KEY else {}
+            target = url.removeprefix("http://").removeprefix("https://")
+            r = requests.get(f"https://r.jina.ai/http://{target}", headers=headers, timeout=30)
+            r.raise_for_status()
+            return _truncate(r.text)
         r = _request(url)
         r.raise_for_status()
-        return _truncate(_normalize_whitespace(_clean_text(r.text)))
-    except Exception as exc:
-        return f"Error: {exc}"
-
-
-@mcp.tool()
-def web_to_markdown(url: str) -> str:
-    """读取网页并转换为 Markdown，便于模型理解页面结构。"""
-    try:
-        r = _request(url)
-        r.raise_for_status()
+        if format == "text":
+            return _truncate(_normalize_whitespace(_clean_text(r.text)))
         return _truncate(_html_to_markdown(r.text))
     except Exception as exc:
-        return f"Markdown Error: {exc}"
+        return f"Error: {exc}"
 
 
 @mcp.tool()
@@ -846,8 +849,9 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 
 @mcp.tool()
-def search_agent(query: str, max_results_per_source: int = 3) -> str:
-    """多源聚合搜索：网页、百科、论文、代码仓库一起查，适合做较全面的检索。"""
+def research_agent(query: str, max_results_per_source: int = 3) -> str:
+    """深度多源调研：同时检索网页、Wikipedia、学术论文（arXiv/Crossref）、GitHub 代码仓库。
+    适合学术研究、技术调研等需要全面信息的场景。日常快速搜索请使用 web_search。"""
     blocks: List[str] = []
     source_errors: List[str] = []
 
@@ -873,17 +877,6 @@ def search_agent(query: str, max_results_per_source: int = 3) -> str:
     return "\n\n".join(blocks) if blocks else "No results."
 
 
-@mcp.tool()
-def jina_reader(url: str) -> str:
-    """使用 Jina Reader 提取网页内容。配置 JINA_API_KEY 后效果通常更稳定。"""
-    try:
-        headers = {"Authorization": f"Bearer {JINA_API_KEY}"} if JINA_API_KEY else {}
-        target = url.removeprefix("http://").removeprefix("https://")
-        r = requests.get(f"https://r.jina.ai/http://{target}", headers=headers, timeout=30)
-        r.raise_for_status()
-        return _truncate(r.text)
-    except Exception as exc:
-        return f"Jina Reader Error: {exc}"
 
 
 def _get_image_bytes(image_url: Optional[str] = None, image_base64: Optional[str] = None) -> bytes:
@@ -974,19 +967,6 @@ def image_describe(image_url: Optional[str] = None, image_base64: Optional[str] 
 
 
 @mcp.tool()
-def jina_vision(image_url: str) -> str:
-    """使用 Jina 读取图片内容。适合作为外部视觉能力的简易补充。"""
-    try:
-        headers = {"Authorization": f"Bearer {JINA_API_KEY}"} if JINA_API_KEY else {}
-        target = image_url.removeprefix("http://").removeprefix("https://")
-        r = requests.get(f"https://r.jina.ai/http://{target}", headers=headers, timeout=40)
-        r.raise_for_status()
-        return _truncate(r.text)
-    except Exception as exc:
-        return f"Jina Vision Error: {exc}"
-
-
-@mcp.tool()
 def pdf_read(url: str, max_pages: int = 10) -> str:
     """读取 PDF 文本内容。适合在线文档、论文和说明书。"""
     try:
@@ -1015,13 +995,15 @@ def youtube_transcript(video_url_or_id: str, languages: Optional[List[str]] = No
         return f"YouTube Transcript Error: {exc}"
 
 
-@mcp.tool()
-def tavily_extract(urls: List[str]) -> str:
-    """直接调用 Tavily Extract，适合批量抽取多个网页内容。"""
-    try:
-        return tavily_extract_urls(urls)
-    except Exception as exc:
-        return f"Tavily Extract Error: {exc}"
+if TAVILY_API_KEY:
+    @mcp.tool()
+    def tavily_extract(urls: List[str]) -> str:
+        """批量抽取多个网页正文（via Tavily Extract API），适合同时处理多个 URL。
+        仅在配置 TAVILY_API_KEY 后可用。"""
+        try:
+            return tavily_extract_urls(urls)
+        except Exception as exc:
+            return f"Tavily Extract Error: {exc}"
 
 
 # ------------------------------
