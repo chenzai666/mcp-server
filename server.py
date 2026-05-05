@@ -40,13 +40,9 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or f"Bearer {secrets.token_urlsafe(24)}"
 
 # 搜索后端相关配置
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:18080/search")
-SEARCH_BACKENDS = [item.strip() for item in os.getenv("SEARCH_BACKENDS", "tavily,searxng,duckduckgo,serp").split(",") if item.strip()]
+SEARCH_BACKENDS = [item.strip() for item in os.getenv("SEARCH_BACKENDS", "tavily,searxng,duckduckgo").split(",") if item.strip()]
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 TAVILY_TOPIC = os.getenv("TAVILY_TOPIC", "general").strip() or "general"
-
-# SERP 抓取引擎配置（无需 API Key）
-# 逗号分隔，优先级按顺序，支持: google,baidu,bing,sogou,360,duckduckgo
-SERP_ENGINES = [item.strip() for item in os.getenv("SERP_ENGINES", "google,baidu,bing,sogou,360,duckduckgo").split(",") if item.strip()]
 
 # Jina 相关配置，可选
 JINA_API_KEY = os.getenv("JINA_API_KEY", "").strip()
@@ -392,228 +388,6 @@ def tavily_extract_urls(urls: List[str]) -> str:
     return _truncate(_normalize_whitespace(str(response.json())), 50000)
 
 
-# ------------------------------
-# 搜索后端：SERP 直接抓取（无需 API Key）
-# 支持 Google、Baidu、Bing、Sogou、360
-# ------------------------------
-
-def _serp_google(query: str, max_results: int = 5) -> List[Dict[str, str]]:
-    """通过 Google SERP 直接抓取搜索结果。"""
-    encoded = urllib.parse.quote_plus(query)
-    url = f"https://www.google.com/search?q={encoded}&hl=zh-CN"
-    response = _request(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    results: List[Dict[str, str]] = []
-
-    for item in soup.select(".g")[:max_results]:
-        title_tag = item.select_one("h3")
-        link_tag = item.select_one("a")
-        snippet_tag = item.select_one(".VwiC3b") or item.select_one(".IsZvec")
-
-        if not title_tag or not link_tag:
-            continue
-
-        href = link_tag.get("href", "")
-        if not href or href.startswith("/") or "google.com" in href:
-            continue
-
-        title = title_tag.get_text(strip=True)
-        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-
-        # 清理 URL 参数
-        clean_url = re.sub(r"&sa=.*", "", href)
-        clean_url = clean_url.split("&")[0] if "?" in clean_url else clean_url
-
-        results.append({
-            "title": title,
-            "url": clean_url,
-            "snippet": snippet,
-            "source": "google",
-        })
-
-    return results
-
-
-def _serp_baidu(query: str, max_results: int = 5) -> List[Dict[str, str]]:
-    """通过百度 SERP 直接抓取搜索结果。"""
-    encoded = urllib.parse.quote(query.encode("utf-8"))
-    url = f"https://www.baidu.com/s?wd={encoded}&rn={max_results}"
-    response = _request(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    results: List[Dict[str, str]] = []
-
-    for item in soup.select(".result, .result-op")[:max_results]:
-        title_tag = item.select_one("h3 a") or item.select_one("h3")
-        link_tag = item.select_one("h3 a") or item.select_one("a")
-        snippet_tag = item.select_one(".c-abstract") or item.select_one(".content-right_8Zs40")
-
-        if not title_tag:
-            continue
-
-        title = title_tag.get_text(strip=True)
-        href = ""
-        if title_tag.name == "a":
-            href = title_tag.get("href", "")
-        else:
-            link = item.select_one("a")
-            if link:
-                href = link.get("href", "")
-
-        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-
-        if not href:
-            continue
-
-        # 百度有时返回的是跳转链接，需要解跳转
-        if "redirect" in href or "baidu.com" in href:
-            try:
-                r = _request(href, allow_redirects=False)
-                href = r.headers.get("Location", href) if r.status_code == 302 else href
-            except Exception:
-                pass
-
-        results.append({
-            "title": title,
-            "url": href,
-            "snippet": snippet[:300] if snippet else "",
-            "source": "baidu",
-        })
-
-    return results
-
-
-def _serp_bing(query: str, max_results: int = 5) -> List[Dict[str, str]]:
-    """通过 Bing 国际版 SERP 直接抓取搜索结果。"""
-    encoded = urllib.parse.quote_plus(query)
-    url = f"https://www.bing.com/search?q={encoded}&ensearch=1"
-    response = _request(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    results: List[Dict[str, str]] = []
-
-    for item in soup.select("li.b_algo")[:max_results]:
-        title_tag = item.select_one("h2 a")
-        link_tag = item.select_one("h2 a")
-        snippet_tag = item.select_one(".b_paractl") or item.select_one("p")
-
-        if not title_tag:
-            continue
-
-        href = link_tag.get("href", "") if link_tag else ""
-        title = title_tag.get_text(strip=True) if title_tag else ""
-        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-
-        if not href:
-            continue
-
-        results.append({
-            "title": title,
-            "url": href,
-            "snippet": snippet[:300] if snippet else "",
-            "source": "bing",
-        })
-
-    return results
-
-
-def _serp_sogou(query: str, max_results: int = 5) -> List[Dict[str, str]]:
-    """通过搜狗 SERP 直接抓取搜索结果。"""
-    encoded = urllib.parse.quote(query.encode("utf-8"))
-    url = f"https://www.sogou.com/web?query={encoded}&ie=utf8"
-    response = _request(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    results: List[Dict[str, str]] = []
-
-    for item in soup.select(".vrwrap, .rb")[:max_results]:
-        title_tag = item.select_one("h3 a") or item.select_one("h3")
-        link_tag = item.select_one("h3 a") or item.select_one("a")
-        snippet_tag = item.select_one(".space-txt") or item.select_one(".str-text-info")
-
-        if not title_tag:
-            continue
-
-        title = title_tag.get_text(strip=True)
-        href = link_tag.get("href", "") if link_tag else ""
-        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-
-        if not href or "sogou.com" in href:
-            continue
-
-        results.append({
-            "title": title,
-            "url": href,
-            "snippet": snippet[:300] if snippet else "",
-            "source": "sogou",
-        })
-
-    return results
-
-
-def _serp_360(query: str, max_results: int = 5) -> List[Dict[str, str]]:
-    """通过 360 搜索 SERP 直接抓取搜索结果。"""
-    encoded = urllib.parse.quote(query.encode("utf-8"))
-    url = f"https://www.so.com/s?q={encoded}&pn=1&rn={max_results}"
-    response = _request(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    results: List[Dict[str, str]] = []
-
-    for item in soup.select(".res-list")[:max_results]:
-        title_tag = item.select_one("h3 a") or item.select_one("h3")
-        link_tag = item.select_one("h3 a")
-        snippet_tag = item.select_one(".des")
-
-        if not title_tag:
-            continue
-
-        title = title_tag.get_text(strip=True)
-        href = link_tag.get("href", "") if link_tag else ""
-        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
-
-        if not href:
-            continue
-
-        results.append({
-            "title": title,
-            "url": href,
-            "snippet": snippet[:300] if snippet else "",
-            "source": "360",
-        })
-
-    return results
-
-
-def search_serp(query: str, max_results: int = 5) -> List[Dict[str, str]]:
-    """SERP 抓取入口，按配置的引擎顺序依次尝试，返回第一个有结果的后端。"""
-    engine_map = {
-        "google": _serp_google,
-        "baidu": _serp_baidu,
-        "bing": _serp_bing,
-        "sogou": _serp_sogou,
-        "360": _serp_360,
-        "duckduckgo": search_duckduckgo_html,
-    }
-
-    errors: List[str] = []
-    for engine in SERP_ENGINES:
-        if engine not in engine_map:
-            continue
-        try:
-            results = engine_map[engine](query, max_results=max_results)
-            if results:
-                logger.info(f"SERP search succeeded with engine: {engine}")
-                return results
-        except Exception as exc:
-            errors.append(f"{engine}: {exc}")
-            logger.warning(f"SERP engine {engine} failed: {exc}")
-
-    # 所有 SERP 引擎都失败了
-    if errors:
-        raise RuntimeError("; ".join(errors))
-    raise RuntimeError("所有 SERP 引擎均无结果")
 
 
 # ------------------------------
@@ -630,8 +404,6 @@ def perform_search(query: str, max_results: int = 5) -> List[Dict[str, str]]:
                 results = search_searxng(query, max_results=max_results)
             elif backend in {"duckduckgo", "duckduckgo-html", "ddg"}:
                 results = search_duckduckgo_html(query, max_results=max_results)
-            elif backend == "serp":
-                results = search_serp(query, max_results=max_results)
             else:
                 errors.append(f"未知搜索后端: {backend}")
                 continue
@@ -841,7 +613,7 @@ def web_extract_metadata(url: str) -> str:
 
 @mcp.tool()
 def web_search(query: str, max_results: int = 5) -> str:
-    """统一联网搜索。优先顺序由 SEARCH_BACKENDS 环境变量决定，支持 Tavily / SearXNG / DuckDuckGo / SERP 直接抓取。"""
+    """快速联网搜索。优先顺序由 SEARCH_BACKENDS 环境变量决定，支持 Tavily / SearXNG / DuckDuckGo。"""
     try:
         return _format_search_results(perform_search(query, max_results=max_results))
     except Exception as exc:
@@ -1060,7 +832,6 @@ async def lifespan(app: FastAPI):
         logger.info("Streamable HTTP endpoint (new): /mcp")
         logger.info("Admin token configured: %s", "yes" if ADMIN_TOKEN else "no")
         logger.info("Search backends: %s", ", ".join(SEARCH_BACKENDS))
-        logger.info("SERP engines (no API key): %s", ", ".join(SERP_ENGINES))
         logger.info("Tavily enabled: %s", "yes" if bool(TAVILY_API_KEY) else "no")
         yield
 
@@ -1096,7 +867,6 @@ def health_check_detail():
         "status": "ok",
         "port": PORT,
         "search_backends": SEARCH_BACKENDS,
-        "serp_engines": SERP_ENGINES,
         "tavily_enabled": bool(TAVILY_API_KEY),
         "ocr_backend": OCR_BACKEND,
         "paddleocr_lang": PADDLEOCR_LANG,
