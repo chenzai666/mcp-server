@@ -1,26 +1,25 @@
-# MCP SSE 工具服务器（已接入 Tavily）
+# MCP 工具服务器（SSE + Streamable HTTP 双传输）
 
-这是一个基于 Python + FastAPI + FastMCP 的 SSE 版 MCP 服务，适合接入 Cherry Studio 等客户端。
+基于 Python + FastAPI + FastMCP 构建，同时支持 SSE 和 Streamable HTTP 两种传输协议，适合接入 Cherry Studio、Claude Desktop 等客户端。
 
 ## 已包含的工具
 
-- `web_fetch`：读取网页正文
-- `web_to_markdown`：网页转 Markdown
-- `web_search`：统一联网搜索，支持 Tavily / SearXNG / DuckDuckGo
-- `search_agent`：多源聚合搜索（网页、百科、论文、代码仓库）
-- `web_extract_links`：提取网页链接
-- `web_extract_metadata`：提取网页元数据
-- `image_ocr`：图片 OCR，支持 URL 或 base64 编码图片，默认使用 PaddleOCR
-- `image_describe`：图片描述，支持 URL 或 base64 编码图片（可对接外部视觉服务）
-- `jina_reader`：Jina 网页读取
-- `jina_vision`：Jina 图片读取
-- `pdf_read`：读取 PDF 文本
-- `youtube_transcript`：提取 YouTube 字幕
-- `tavily_extract`：直接调用 Tavily Extract
+| 工具 | 说明 |
+|------|------|
+| `web_read` | 读取网页内容，支持 `markdown`（默认）/ `text` / `jina` 三种格式 |
+| `web_search` | 统一联网搜索，支持 Tavily / SearXNG / DuckDuckGo，按优先级自动回退 |
+| `search_agent` | 多源聚合搜索（网页、百科、论文、代码仓库） |
+| `web_extract_links` | 提取网页中的所有链接 |
+| `web_extract_metadata` | 提取网页元数据（标题、描述、关键词等） |
+| `image_ocr` | 图片 OCR，支持 URL 或 base64，默认使用 PaddleOCR |
+| `image_describe` | 图片描述，支持 URL 或 base64（可对接外部视觉服务） |
+| `pdf_read` | 读取 PDF 文本内容 |
+| `youtube_transcript` | 提取 YouTube 视频字幕 |
+| `tavily_extract` | 调用 Tavily Extract 提取网页精华（需配置 `TAVILY_API_KEY`） |
 
 ## 目录说明
 
-- `server.py`：主服务代码，已尽量使用中文注释
+- `server.py`：主服务代码
 - `Dockerfile`：镜像构建文件（生产环境）
 - `Dockerfile.dev`：开发环境镜像，支持热加载
 - `docker-compose.yml`：编排文件（生产环境）
@@ -32,52 +31,85 @@
 
 ```bash
 cp .env.example .env
-# 按需修改 ADMIN_TOKEN、TAVILY_API_KEY、SEARXNG_SECRET
+# 按需修改 ADMIN_TOKEN、TAVILY_API_KEY、SEARXNG_SECRET 等
 
 # 生产模式
 docker compose up -d --build
 
-# 开发模式（代码热加载，首次需要 build，后续修改代码自动重载）
+# 开发模式（代码热加载）
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
 ## 健康检查
 
 ```bash
+# 公开端点，仅返回服务状态
 curl http://127.0.0.1:59795/health
+
+# 详细配置信息（需要 Authorization header）
+curl -H "Authorization: Bearer 你的Token" http://127.0.0.1:59795/health/detail
 ```
 
-## Cherry Studio 配置
+## 客户端配置
+
+### Cherry Studio（SSE）
 
 - 类型：`SSE`
 - URL：`http://你的服务器IP:59795/sse`
 - Header：`Authorization: Bearer 你的Token`
 
+### Claude Desktop / 支持 Streamable HTTP 的客户端
+
+- URL：`http://你的服务器IP:59795/mcp`
+- Header：`Authorization: Bearer 你的Token`
+
+## 环境变量
+
+### 基础配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `PORT` | 服务端口 | `59795` |
+| `ADMIN_TOKEN` | 鉴权 Token，格式：`Bearer xxx` | 必填 |
+| `REQUEST_TIMEOUT` | HTTP 请求超时（秒） | `20` |
+| `RATE_LIMIT_RPM` | 每 IP 每分钟最大请求数 | `120` |
+
+### 搜索配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `SEARCH_BACKENDS` | 搜索后端优先级，逗号分隔 | `tavily,searxng,duckduckgo` |
+| `TAVILY_API_KEY` | Tavily API Key | - |
+| `TAVILY_TOPIC` | Tavily 搜索主题 | `general` |
+| `SEARXNG_URL` | SearXNG 搜索接口地址 | - |
+| `SEARXNG_BASE_URL` | SearXNG 基础地址（用于结果拼接） | - |
+| `SEARXNG_SECRET` | SearXNG 密钥 | - |
+
+### OCR 配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `OCR_BACKEND` | OCR 引擎：`paddleocr` / `baidu` / `tesseract` | `paddleocr` |
+| `PADDLEOCR_LANG` | PaddleOCR 语言：`ch`（中英文）、`en` 等 | `ch` |
+| `OCR_LANG` | Tesseract 语言（仅 Tesseract 模式） | `eng+chi_sim` |
+| `BAIDU_OCR_API_KEY` | 百度 OCR API Key | - |
+| `BAIDU_OCR_SECRET_KEY` | 百度 OCR Secret Key | - |
+
+### 可选增强
+
+| 变量 | 说明 |
+|------|------|
+| `JINA_API_KEY` | Jina API Key，用于 `web_read` 的 `jina` 格式 |
+| `VISION_API_URL` | 外部视觉服务地址，用于 `image_describe` |
+| `VISION_API_KEY` | 外部视觉服务 API Key |
+| `GITHUB_TOKEN` | GitHub Token，用于访问私有仓库 |
+
 ## 说明
 
-1. `web_search` 会按 `SEARCH_BACKENDS` 顺序搜索，推荐：`tavily,searxng,duckduckgo`
-2. 没有配置 `TAVILY_API_KEY` 时，会自动回退到后面的搜索后端
-3. `image_ocr` 默认使用 PaddleOCR，中文识别效果更好；可通过 `OCR_BACKEND=tesseract` 切换
-4. `image_describe` 没配置 `VISION_API_URL` 时，会回退为"图片基础信息 + OCR 文本"模式
-5. `youtube_transcript` 依赖公开视频存在字幕
-
-## OCR 配置
-
-| 环境变量 | 说明 | 默认值 |
-|---------|------|--------|
-| `OCR_BACKEND` | OCR 引擎：`paddleocr`、`baidu` 或 `tesseract` | `paddleocr` |
-| `PADDLEOCR_LANG` | PaddleOCR 语言：`ch`（中英文）、`en`、`fr` 等 | `ch` |
-| `BAIDU_OCR_API_KEY` | 百度 OCR API Key（OCR_BACKEND=baidu 时需配置） | - |
-| `BAIDU_OCR_SECRET_KEY` | 百度 OCR Secret Key | - |
-| `OCR_LANG` | Tesseract 语言（仅 Tesseract 模式） | `eng+chi_sim` |
-
-### 百度 OCR 配置说明
-
-1. 访问 [百度智能云 OCR](https://cloud.baidu.com/product/ocr) 开通服务
-2. 在控制台创建应用，获取 API Key 和 Secret Key
-3. 设置环境变量：
-   ```
-   OCR_BACKEND=baidu
-   BAIDU_OCR_API_KEY=你的API_KEY
-   BAIDU_OCR_SECRET_KEY=你的SECRET_KEY
-   ```
+1. `web_search` 按 `SEARCH_BACKENDS` 顺序尝试，某个后端失败自动切换下一个
+2. 未配置 `TAVILY_API_KEY` 时，`tavily_extract` 工具不会注册，`web_search` 自动跳过 Tavily
+3. `web_read` 的 `jina` 格式未配置 `JINA_API_KEY` 时仍可使用，但有速率限制
+4. `image_ocr` 默认 PaddleOCR，中文识别效果好；可通过 `OCR_BACKEND=tesseract` 切换
+5. `image_describe` 未配置 `VISION_API_URL` 时，回退为"基础信息 + OCR 文本"模式
+6. `youtube_transcript` 依赖视频已开启公开字幕
+7. SSE 连接设有 15 秒心跳保活，客户端断线后自动每 3 秒重连一次
