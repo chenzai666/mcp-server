@@ -919,83 +919,89 @@ def health_check_detail():
 
 
 import asyncio
+from starlette.types import Scope as _ASGIScope, Receive as _ASGIReceive, Send as _ASGISend
 
 _SSE_KEEPALIVE_INTERVAL = 15  # 秒，缩短到 15s 防止 30s 超时的代理误杀连接
 
-async def handle_sse(request: Request):
-    """SSE 长连接入口。Cherry Studio 等客户端通过这里建立会话。"""
-    _response_started = False
-    original_send = request._send
 
-    async def guarded_send(message):
-        nonlocal _response_started
-        if message["type"] == "http.response.start":
-            if _response_started:
-                return  # SSE 已发过响应，丢弃 Starlette 外层的重复响应
-            _response_started = True
-            await original_send(message)
-            # 连接建立后立即告知客户端断线重连间隔（3 秒），
-            # 符合 SSE 规范的客户端会在断线后自动重连
-            await original_send({
-                "type": "http.response.body",
-                "body": b"retry: 3000\n\n",
-                "more_body": True,
-            })
-            return
-        await original_send(message)
+class _SSEApp:
+    """SSE 长连接 ASGI app。Cherry Studio 等客户端通过 /sse 建立会话。
 
-    async with transport.connect_sse(request.scope, request.receive, guarded_send) as streams:
-        in_stream, out_stream = streams
+    使用 ASGI 类而非普通函数，直接接收 send，避免 Starlette 的
+    request_response 包装器因返回值为 None 而触发 TypeError。
+    """
 
-        async def _keepalive():
-            """定期发送 SSE 注释行，防止代理/客户端因空闲断开连接。"""
+    async def __call__(self, scope: _ASGIScope, receive: _ASGIReceive, send: _ASGISend) -> None:
+        _response_started = False
+
+        async def guarded_send(message):
+            nonlocal _response_started
+            if message["type"] == "http.response.start":
+                if _response_started:
+                    return
+                _response_started = True
+                await send(message)
+                # 连接建立后立即告知客户端断线重连间隔（3 秒）
+                await send({
+                    "type": "http.response.body",
+                    "body": b"retry: 3000\n\n",
+                    "more_body": True,
+                })
+                return
+            await send(message)
+
+        async with transport.connect_sse(scope, receive, guarded_send) as streams:
+            in_stream, out_stream = streams
+
+            async def _keepalive():
+                try:
+                    while True:
+                        await asyncio.sleep(_SSE_KEEPALIVE_INTERVAL)
+                        try:
+                            await send({
+                                "type": "http.response.body",
+                                "body": b": keepalive\n\n",
+                                "more_body": True,
+                            })
+                        except Exception:
+                            break
+                except asyncio.CancelledError:
+                    pass
+
+            keepalive_task = asyncio.create_task(_keepalive())
             try:
-                while True:
-                    await asyncio.sleep(_SSE_KEEPALIVE_INTERVAL)
-                    try:
-                        await original_send({
-                            "type": "http.response.body",
-                            "body": b": keepalive\n\n",
-                            "more_body": True,
-                        })
-                    except Exception:
-                        break  # 连接已关闭
-            except asyncio.CancelledError:
-                pass
-
-        keepalive_task = asyncio.create_task(_keepalive())
-        try:
-            await mcp._mcp_server.run(
-                in_stream,
-                out_stream,
-                mcp._mcp_server.create_initialization_options(),
-            )
-        finally:
-            keepalive_task.cancel()
-            try:
-                await keepalive_task
-            except asyncio.CancelledError:
-                pass
+                await mcp._mcp_server.run(
+                    in_stream,
+                    out_stream,
+                    mcp._mcp_server.create_initialization_options(),
+                )
+            finally:
+                keepalive_task.cancel()
+                try:
+                    await keepalive_task
+                except asyncio.CancelledError:
+                    pass
 
 
-# /sse: 建立 SSE 长连接（兼容旧版客户端：Cherry Studio、Claude Desktop 等）
-app.add_route("/sse", handle_sse, methods=["GET"])
-# /messages/: 客户端实际投递 MCP 请求的入口（配合 /sse 使用）
-app.mount("/messages/", transport.handle_post_message)
-
-
-@app.api_route("/mcp", methods=["GET", "POST", "DELETE"])
-async def handle_mcp(request: Request):
-    """Streamable HTTP 端点，支持新版 MCP 客户端（Claude Code、claude.ai 等）。
+class _MCPApp:
+    """Streamable HTTP ASGI app。支持 Claude Code、claude.ai 等新版客户端。
 
     - GET  /mcp : 建立 SSE 流，接收服务端推送（可选）
     - POST /mcp : 发送 MCP 请求，返回 JSON 或 SSE 流
     - DELETE /mcp : 终止会话
     会话通过 Mcp-Session-Id 响应头追踪。
     """
-    await session_manager.handle_request(
-        request.scope, request.receive, request._send
-    )
+
+    async def __call__(self, scope: _ASGIScope, receive: _ASGIReceive, send: _ASGISend) -> None:
+        await session_manager.handle_request(scope, receive, send)
+
+
+# /sse: 建立 SSE 长连接（兼容旧版客户端：Cherry Studio、Claude Desktop 等）
+app.add_route("/sse", _SSEApp(), methods=["GET"])
+# /messages/: 客户端实际投递 MCP 请求的入口（配合 /sse 使用）
+app.mount("/messages/", transport.handle_post_message)
+# /mcp: Streamable HTTP 端点（新版客户端）
+app.add_route("/mcp", _MCPApp(), methods=["GET", "POST", "DELETE"])
 
 
 if __name__ == "__main__":
