@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request
 from markdownify import markdownify as html_to_markdown
 from fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http import StreamableHTTPSessionManager
 from PIL import Image
 from pypdf import PdfReader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -75,6 +76,13 @@ HEADERS = {"User-Agent": USER_AGENT}
 mcp = FastMCP("Web-Tools-Server")
 # SSE 模式下，客户端通过 /sse 建立长连接，再通过 /messages/ 发起请求
 transport = SseServerTransport("/messages/")
+# Streamable HTTP 模式：单端点 /mcp，支持 Claude Code 等新版客户端
+session_manager = StreamableHTTPSessionManager(
+    app=mcp._mcp_server,
+    event_store=None,
+    json_response=False,
+    stateless=False,
+)
 
 
 def _get_baidu_access_token():
@@ -1026,14 +1034,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """服务启动时输出关键信息，便于排查部署问题。"""
-    logger.info("MCP server starting on port %s", PORT)
-    logger.info("SSE endpoint: /sse")
-    logger.info("POST endpoint: /messages/")
-    logger.info("Admin token configured: %s", "yes" if ADMIN_TOKEN else "no")
-    logger.info("Search backends: %s", ", ".join(SEARCH_BACKENDS))
-    logger.info("SERP engines (no API key): %s", ", ".join(SERP_ENGINES))
-    logger.info("Tavily enabled: %s", "yes" if bool(TAVILY_API_KEY) else "no")
-    yield
+    async with session_manager.run():
+        logger.info("MCP server starting on port %s", PORT)
+        logger.info("SSE endpoint (legacy): /sse + /messages/")
+        logger.info("Streamable HTTP endpoint (new): /mcp")
+        logger.info("Admin token configured: %s", "yes" if ADMIN_TOKEN else "no")
+        logger.info("Search backends: %s", ", ".join(SEARCH_BACKENDS))
+        logger.info("SERP engines (no API key): %s", ", ".join(SERP_ENGINES))
+        logger.info("Tavily enabled: %s", "yes" if bool(TAVILY_API_KEY) else "no")
+        yield
 
 
 app = FastAPI(title="MCP Advanced Web OSINT Server", lifespan=lifespan)
@@ -1046,6 +1055,7 @@ async def index():
     return {
         "ok": True,
         "name": "Web-Tools-Server",
+        "mcp": "/mcp",
         "sse": "/sse",
         "messages": "/messages/",
         "health": "/health",
@@ -1133,10 +1143,24 @@ async def handle_sse(request: Request):
                 pass
 
 
-# /sse: 建立 SSE 长连接
+# /sse: 建立 SSE 长连接（兼容旧版客户端：Cherry Studio、Claude Desktop 等）
 app.add_route("/sse", handle_sse, methods=["GET"])
-# /messages/: 客户端实际投递 MCP 请求的入口
+# /messages/: 客户端实际投递 MCP 请求的入口（配合 /sse 使用）
 app.mount("/messages/", transport.handle_post_message)
+
+
+@app.api_route("/mcp", methods=["GET", "POST", "DELETE"])
+async def handle_mcp(request: Request):
+    """Streamable HTTP 端点，支持新版 MCP 客户端（Claude Code、claude.ai 等）。
+
+    - GET  /mcp : 建立 SSE 流，接收服务端推送（可选）
+    - POST /mcp : 发送 MCP 请求，返回 JSON 或 SSE 流
+    - DELETE /mcp : 终止会话
+    会话通过 Mcp-Session-Id 响应头追踪。
+    """
+    await session_manager.handle_request(
+        request.scope, request.receive, request._send
+    )
 
 
 if __name__ == "__main__":
