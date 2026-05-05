@@ -10,8 +10,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       PORT: 59795
-      # MCP 鉴权 Token，Cherry Studio 连接时要放到 Authorization 请求头里
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-Bearer mcp_admin_secret_2026}
+      # MCP 鉴权 Token，不填则自动生成并持久化到 mcp_data 卷，首次启动后查看日志获取
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       # SearXNG 本地搜索服务地址
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:18080/search}
       # 搜索后端优先级，已内置 Tavily
@@ -29,6 +29,8 @@ services:
       VISION_API_KEY: ${VISION_API_KEY:-}
       # GitHub Token，可选。用于 search_agent 提高 GitHub API 限额
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - mcp_data:/data
     depends_on:
       - searxng
 
@@ -48,3 +50,4 @@ services:
 
 volumes:
   searxng_config:
+  mcp_data:

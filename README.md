@@ -54,12 +54,18 @@ cp .env.example .env
 **必填：**
 
 ```env
-# 自定义一个强密码，客户端连接时需要填写
-ADMIN_TOKEN=Bearer 换成你自己的随机字符串
+# ADMIN_TOKEN 可以不填，服务启动时会自动生成并持久化
+# 首次启动后执行 docker compose logs mcp-server 查看生成的 Token
+ADMIN_TOKEN=
 
 # SearXNG 内置搜索引擎的密钥，随意填写但要和下面保持一致
 SEARXNG_SECRET=换成你自己的随机字符串
 ```
+
+> 如需自定义 Token，格式为 `Bearer 你的随机字符串`，例如：
+> ```env
+> ADMIN_TOKEN=Bearer myS3cur3T0ken
+> ```
 
 **推荐配置（可选）：**
 
@@ -86,13 +92,31 @@ docker compose up -d --build
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-### 第四步：验证运行
+### 第四步：获取 Token 并验证运行
+
+若未在 `.env` 中配置 `ADMIN_TOKEN`，首次启动时会自动生成并打印到日志：
 
 ```bash
-# 应返回 {"status":"ok"}
+# 查看自动生成的 Token
+docker compose logs mcp-server | grep "ADMIN_TOKEN auto-generated" -A 2
+```
+
+日志示例：
+```
+WARNING  mcp-server: ============================================================
+WARNING  mcp-server: ADMIN_TOKEN auto-generated (not set in env):
+WARNING  mcp-server:   Bearer AbCdEfGhIjKlMnOpQrStUvWxYz12345678901234
+WARNING  mcp-server: Token saved to: /data/admin_token
+WARNING  mcp-server: ============================================================
+```
+
+Token 已持久化到 Docker 卷，**重启容器后仍有效，无需重新配置客户端**。
+
+```bash
+# 验证服务正常（应返回 {"status":"ok"}）
 curl http://127.0.0.1:59795/health
 
-# 查看完整配置信息（替换为你的 Token）
+# 验证 Token 有效
 curl -H "Authorization: Bearer 你的Token" http://127.0.0.1:59795/health/detail
 ```
 

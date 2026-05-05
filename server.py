@@ -36,7 +36,28 @@ USER_AGENT = os.getenv(
 )
 TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "20"))
 PORT = int(os.getenv("PORT", "59795"))
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or f"Bearer {secrets.token_urlsafe(24)}"
+
+# ADMIN_TOKEN 加载逻辑：环境变量 > 持久化文件 > 自动生成并写入文件
+_TOKEN_FILE = os.getenv("TOKEN_FILE", "/data/admin_token")
+_token_auto_generated = False
+
+def _load_or_generate_token() -> str:
+    env_token = os.getenv("ADMIN_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    if os.path.isfile(_TOKEN_FILE):
+        token = open(_TOKEN_FILE).read().strip()
+        if token:
+            return token
+    token = f"Bearer {secrets.token_urlsafe(32)}"
+    os.makedirs(os.path.dirname(_TOKEN_FILE), exist_ok=True)
+    with open(_TOKEN_FILE, "w") as f:
+        f.write(token)
+    global _token_auto_generated
+    _token_auto_generated = True
+    return token
+
+ADMIN_TOKEN = _load_or_generate_token()
 
 # 搜索后端相关配置
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://searxng:18080/search")
@@ -830,7 +851,14 @@ async def lifespan(app: FastAPI):
         logger.info("MCP server starting on port %s", PORT)
         logger.info("SSE endpoint (legacy): /sse + /messages/")
         logger.info("Streamable HTTP endpoint (new): /mcp")
-        logger.info("Admin token configured: %s", "yes" if ADMIN_TOKEN else "no")
+        if _token_auto_generated:
+            logger.warning("=" * 60)
+            logger.warning("ADMIN_TOKEN auto-generated (not set in env):")
+            logger.warning("  %s", ADMIN_TOKEN)
+            logger.warning("Token saved to: %s", _TOKEN_FILE)
+            logger.warning("=" * 60)
+        else:
+            logger.info("Admin token: configured via env or file")
         logger.info("Search backends: %s", ", ".join(SEARCH_BACKENDS))
         logger.info("Tavily enabled: %s", "yes" if bool(TAVILY_API_KEY) else "no")
         yield
