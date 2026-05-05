@@ -27,41 +27,169 @@
 - `.env.example`：环境变量模板
 - `requirements.txt`：Python 依赖
 
-## 快速部署
+---
+
+## 部署指南
+
+### 前置要求
+
+- Docker >= 20.10
+- Docker Compose >= 2.0（`docker compose` 命令）
+
+### 第一步：克隆项目
+
+```bash
+git clone https://github.com/chenzai666/mcp-server.git
+cd mcp-server
+```
+
+### 第二步：配置环境变量
 
 ```bash
 cp .env.example .env
-# 按需修改 ADMIN_TOKEN、TAVILY_API_KEY、SEARXNG_SECRET 等
+```
 
-# 生产模式
+用编辑器打开 `.env`，按需修改以下内容：
+
+**必填：**
+
+```env
+# 自定义一个强密码，客户端连接时需要填写
+ADMIN_TOKEN=Bearer 换成你自己的随机字符串
+
+# SearXNG 内置搜索引擎的密钥，随意填写但要和下面保持一致
+SEARXNG_SECRET=换成你自己的随机字符串
+```
+
+**推荐配置（可选）：**
+
+```env
+# Tavily：搜索质量最好，建议申请免费 Key（https://tavily.com）
+TAVILY_API_KEY=tvly-xxxxxxxxxxxx
+
+# Jina：用于 web_read 的 jina 格式，无 Key 也能用但有速率限制
+JINA_API_KEY=jina_xxxxxxxxxxxx
+```
+
+### 第三步：启动服务
+
+```bash
+# 生产模式（后台运行）
 docker compose up -d --build
+```
 
-# 开发模式（代码热加载）
+> 首次构建需要 5~10 分钟，PaddleOCR 镜像较大。
+
+**开发模式**（代码修改后自动重载，无需重启容器）：
+
+```bash
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-## 健康检查
+### 第四步：验证运行
 
 ```bash
-# 公开端点，仅返回服务状态
+# 应返回 {"status":"ok"}
 curl http://127.0.0.1:59795/health
 
-# 详细配置信息（需要 Authorization header）
+# 查看完整配置信息（替换为你的 Token）
 curl -H "Authorization: Bearer 你的Token" http://127.0.0.1:59795/health/detail
 ```
 
-## 客户端配置
+### 常用运维命令
+
+```bash
+# 查看运行日志
+docker compose logs -f mcp-server
+
+# 重启服务
+docker compose restart mcp-server
+
+# 停止所有服务
+docker compose down
+
+# 更新代码后重新构建
+git pull && docker compose up -d --build
+```
+
+---
+
+## 客户端接入
 
 ### Cherry Studio（SSE）
 
-- 类型：`SSE`
-- URL：`http://你的服务器IP:59795/sse`
+在 Cherry Studio → 设置 → MCP 服务器 → 新增：
+
+| 字段 | 值 |
+|------|-----|
+| 类型 | `SSE` |
+| URL | `http://服务器IP:59795/sse` |
+| Authorization | `Bearer 你的Token` |
+
+### Claude Desktop（Streamable HTTP）
+
+编辑 `claude_desktop_config.json`（Mac 路径：`~/Library/Application Support/Claude/`）：
+
+```json
+{
+  "mcpServers": {
+    "mcp-server": {
+      "url": "http://服务器IP:59795/mcp",
+      "headers": {
+        "Authorization": "Bearer 你的Token"
+      }
+    }
+  }
+}
+```
+
+### 其他支持 Streamable HTTP 的客户端
+
+- URL：`http://服务器IP:59795/mcp`
 - Header：`Authorization: Bearer 你的Token`
 
-### Claude Desktop / 支持 Streamable HTTP 的客户端
+---
 
-- URL：`http://你的服务器IP:59795/mcp`
-- Header：`Authorization: Bearer 你的Token`
+## 公网访问（Nginx 反代 + HTTPS）
+
+如果服务器在公网，建议套一层 Nginx 并开启 HTTPS，避免 Token 明文传输。
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name 你的域名;
+
+    # SSL 证书配置（可用 certbot 自动申请）
+    ssl_certificate     /etc/letsencrypt/live/你的域名/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/你的域名/privkey.pem;
+
+    # SSE 端点
+    location /sse {
+        proxy_pass http://127.0.0.1:59795/sse;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header Connection '';
+        chunked_transfer_encoding on;
+        proxy_read_timeout 300s;
+    }
+
+    # Streamable HTTP 端点
+    location /mcp {
+        proxy_pass http://127.0.0.1:59795/mcp;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    # 健康检查
+    location /health {
+        proxy_pass http://127.0.0.1:59795/health;
+    }
+}
+```
+
+配置后客户端填写 `https://你的域名/sse` 或 `https://你的域名/mcp` 即可。
+
+---
 
 ## 环境变量
 
@@ -104,7 +232,9 @@ curl -H "Authorization: Bearer 你的Token" http://127.0.0.1:59795/health/detail
 | `VISION_API_KEY` | 外部视觉服务 API Key |
 | `GITHUB_TOKEN` | GitHub Token，用于访问私有仓库 |
 
-## 说明
+---
+
+## 补充说明
 
 1. `web_search` 按 `SEARCH_BACKENDS` 顺序尝试，某个后端失败自动切换下一个
 2. 未配置 `TAVILY_API_KEY` 时，`tavily_extract` 工具不会注册，`web_search` 自动跳过 Tavily
