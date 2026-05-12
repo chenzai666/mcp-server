@@ -46,12 +46,13 @@ _token_auto_generated = False
 def _load_or_generate_token() -> str:
     env_token = os.getenv("ADMIN_TOKEN", "").strip()
     if env_token:
-        return env_token
+        # 兼容旧格式：去掉 "Bearer " 前缀，统一存原始 token
+        return env_token.removeprefix("Bearer ").strip()
     if os.path.isfile(_TOKEN_FILE):
         token = open(_TOKEN_FILE).read().strip()
         if token:
-            return token
-    token = f"Bearer {secrets.token_urlsafe(32)}"
+            return token.removeprefix("Bearer ").strip()
+    token = secrets.token_urlsafe(32)
     os.makedirs(os.path.dirname(_TOKEN_FILE), exist_ok=True)
     with open(_TOKEN_FILE, "w") as f:
         f.write(token)
@@ -831,19 +832,31 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """简单 Bearer Token 鉴权。
+    """Token 鉴权，支持两种方式（优先级相同）：
 
-    说明：
-    - /health 和 / 允许匿名访问，方便健康检查。
-    - /health/detail 及其余端点均要求 Authorization。
+    1. URL Query 参数：?apiKey=<token>  （推荐，配置简单）
+       SSE:  https://your-server.com/sse?apiKey=your_token
+       HTTP: https://your-server.com/mcp?apiKey=your_token
+
+    2. 请求头：Authorization: Bearer <token>  （兼容旧方式）
+
+    /health、/ 允许匿名访问。
     """
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path in {"/health", "/", "/docs", "/openapi.json"}:
             return await call_next(request)
-        if request.headers.get("Authorization") != ADMIN_TOKEN:
-            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
-        return await call_next(request)
+
+        # 方式一：URL Query 参数
+        if request.query_params.get("apiKey", "") == ADMIN_TOKEN:
+            return await call_next(request)
+
+        # 方式二：Authorization 请求头
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.removeprefix("Bearer ").strip() == ADMIN_TOKEN:
+            return await call_next(request)
+
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
 
 @asynccontextmanager
@@ -856,8 +869,9 @@ async def lifespan(app: FastAPI):
         if _token_auto_generated:
             logger.warning("=" * 60)
             logger.warning("ADMIN_TOKEN auto-generated (not set in env):")
-            logger.warning("  %s", ADMIN_TOKEN)
-            logger.warning("Token saved to: %s", _TOKEN_FILE)
+            logger.warning("  Token : %s", ADMIN_TOKEN)
+            logger.warning("  Usage : ?apiKey=%s  或  Authorization: Bearer %s", ADMIN_TOKEN, ADMIN_TOKEN)
+            logger.warning("  Saved : %s", _TOKEN_FILE)
             logger.warning("=" * 60)
         else:
             logger.info("Admin token: configured via env or file")

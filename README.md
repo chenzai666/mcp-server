@@ -62,9 +62,9 @@ ADMIN_TOKEN=
 SEARXNG_SECRET=换成你自己的随机字符串
 ```
 
-> 如需自定义 Token，格式为 `Bearer 你的随机字符串`，例如：
+> 如需自定义 Token，直接填写原始字符串即可（无需加 `Bearer ` 前缀），例如：
 > ```env
-> ADMIN_TOKEN=Bearer myS3cur3T0ken
+> ADMIN_TOKEN=myS3cur3T0ken
 > ```
 
 **推荐配置（可选）：**
@@ -105,8 +105,9 @@ docker compose logs mcp-server | grep "ADMIN_TOKEN auto-generated" -A 2
 ```
 WARNING  mcp-server: ============================================================
 WARNING  mcp-server: ADMIN_TOKEN auto-generated (not set in env):
-WARNING  mcp-server:   Bearer AbCdEfGhIjKlMnOpQrStUvWxYz12345678901234
-WARNING  mcp-server: Token saved to: /data/admin_token
+WARNING  mcp-server:   Token : AbCdEfGhIjKlMnOpQrStUvWxYz12345678901234
+WARNING  mcp-server:   Usage : ?apiKey=AbCd...  或  Authorization: Bearer AbCd...
+WARNING  mcp-server:   Saved : /data/admin_token
 WARNING  mcp-server: ============================================================
 ```
 
@@ -116,7 +117,8 @@ Token 已持久化到 Docker 卷，**重启容器后仍有效，无需重新配�
 # 验证服务正常（应返回 {"status":"ok"}）
 curl http://127.0.0.1:59795/health
 
-# 验证 Token 有效
+# 验证 Token 有效（两种方式均可）
+curl "http://127.0.0.1:59795/health/detail?apiKey=你的Token"
 curl -H "Authorization: Bearer 你的Token" http://127.0.0.1:59795/health/detail
 ```
 
@@ -140,6 +142,23 @@ git pull && docker compose up -d --build
 
 ## 客户端接入
 
+支持两种认证方式，**推荐 URL 参数方式**，配置更简单：
+
+| 方式 | 示例 |
+|------|------|
+| URL 参数（推荐） | `http://服务器IP:59795/mcp?apiKey=你的Token` |
+| 请求头（兼容旧方式） | `Authorization: Bearer 你的Token` |
+
+### Claude Code（推荐）
+
+```bash
+# Streamable HTTP 模式（推荐）
+claude mcp add --transport http mcp-server "http://服务器IP:59795/mcp?apiKey=你的Token"
+
+# SSE 模式
+claude mcp add --transport sse mcp-server "http://服务器IP:59795/sse?apiKey=你的Token"
+```
+
 ### Cherry Studio（SSE）
 
 在 Cherry Studio → 设置 → MCP 服务器 → 新增：
@@ -147,8 +166,7 @@ git pull && docker compose up -d --build
 | 字段 | 值 |
 |------|-----|
 | 类型 | `SSE` |
-| URL | `http://服务器IP:59795/sse` |
-| Authorization | `Bearer 你的Token` |
+| URL | `http://服务器IP:59795/sse?apiKey=你的Token` |
 
 ### Claude Desktop（Streamable HTTP）
 
@@ -158,10 +176,7 @@ git pull && docker compose up -d --build
 {
   "mcpServers": {
     "mcp-server": {
-      "url": "http://服务器IP:59795/mcp",
-      "headers": {
-        "Authorization": "Bearer 你的Token"
-      }
+      "url": "http://服务器IP:59795/mcp?apiKey=你的Token"
     }
   }
 }
@@ -169,8 +184,7 @@ git pull && docker compose up -d --build
 
 ### 其他支持 Streamable HTTP 的客户端
 
-- URL：`http://服务器IP:59795/mcp`
-- Header：`Authorization: Bearer 你的Token`
+- URL：`http://服务器IP:59795/mcp?apiKey=你的Token`
 
 ---
 
@@ -211,7 +225,12 @@ server {
 }
 ```
 
-配置后客户端填写 `https://你的域名/sse` 或 `https://你的域名/mcp` 即可。
+配置后客户端填写以下地址：
+
+```
+https://你的域名/mcp?apiKey=你的Token   # Streamable HTTP（推荐）
+https://你的域名/sse?apiKey=你的Token   # SSE
+```
 
 ---
 
@@ -222,7 +241,7 @@ server {
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `PORT` | 服务端口 | `59795` |
-| `ADMIN_TOKEN` | 鉴权 Token，格式：`Bearer xxx` | 必填 |
+| `ADMIN_TOKEN` | 鉴权 Token，填原始字符串（无需 `Bearer ` 前缀） | 自动生成 |
 | `REQUEST_TIMEOUT` | HTTP 请求超时（秒） | `20` |
 | `RATE_LIMIT_RPM` | 每 IP 每分钟最大请求数 | `120` |
 
