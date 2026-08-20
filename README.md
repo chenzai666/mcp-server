@@ -186,6 +186,27 @@ claude mcp add --transport sse mcp-server "http://服务器IP:59795/sse?apiKey=�
 
 - URL：`http://服务器IP:59795/mcp?apiKey=你的Token`
 
+### AutoClaw
+
+AutoClaw 的两种配置必须对应到不同端点：
+
+| AutoClaw 传输类型 | URL |
+|------------------|-----|
+| `SSE`（旧版 HTTP+SSE） | `http://服务器IP:59795/sse?apiKey=你的Token` |
+| `Streamable HTTP` | `http://服务器IP:59795/mcp?apiKey=你的Token` |
+
+旧版 SSE 的正常流程是 `GET /sse` 获取 endpoint，再向
+`/messages/?session_id=...` 投递完整 JSON-RPC；Streamable HTTP 的正常流程是向
+`/mcp` 首次 `POST` 完整 JSON-RPC `initialize`，再使用响应中的
+`Mcp-Session-Id` 发送后续请求。因此，直接访问 `/mcp` 的裸 GET、只带
+`Accept: text/event-stream` 的 GET 或空 POST 返回 406/400，属于协议拒绝，不能
+作为健康检查成功条件。
+
+部分 AutoClaw 版本不会把首次 URL 中的 `apiKey` 复制到第二跳请求。本服务会把已
+鉴权且仍活动的 `session_id` / `Mcp-Session-Id` 视为会话级凭据，因此不需要把长期
+`apiKey` 拼进 SSE endpoint；会话被服务端销毁（例如 DELETE、断开清理或重启）后该
+会话 ID 才失效。不要在日志、截图或工单中公开 endpoint 和 `Mcp-Session-Id`。
+
 ---
 
 ## 公网访问（Nginx 反代 + HTTPS）

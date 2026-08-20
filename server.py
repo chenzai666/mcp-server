@@ -810,6 +810,55 @@ _RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "120"))  # 每 IP 每分钟最
 _rate_counters: dict = defaultdict(list)
 
 
+def _token_matches(candidate: str) -> bool:
+    """使用常量时间比较校验静态管理令牌。"""
+    return bool(candidate) and secrets.compare_digest(candidate, ADMIN_TOKEN)
+
+
+def _is_active_legacy_sse_session(session_id: str) -> bool:
+    """判断旧版 SSE 的 session_id 是否仍由服务端持有。"""
+    if not session_id or len(session_id) > 64:
+        return False
+
+    # SseServerTransport 在 mcp 1.27.x 中以 UUID 作为内部键；通过 UUID 解析
+    # 同时拒绝任意字符串，避免把普通 query 参数误当作会话凭据。
+    try:
+        from uuid import UUID
+
+        parsed_session_id = UUID(hex=session_id)
+    except (AttributeError, ValueError, TypeError):
+        return False
+
+    active_sessions = getattr(transport, "_read_stream_writers", {})
+    return parsed_session_id in active_sessions
+
+
+def _is_active_streamable_http_session(session_id: str) -> bool:
+    """判断 Streamable HTTP 的 Mcp-Session-Id 是否仍处于活动状态。"""
+    if not session_id or len(session_id) > 128:
+        return False
+
+    active_sessions = getattr(session_manager, "_server_instances", {})
+    return session_id in active_sessions
+
+
+def _is_active_mcp_session_request(request: Request) -> bool:
+    """为未重复携带静态令牌的 MCP 会话请求提供会话级鉴权。"""
+    if request.method not in {"GET", "POST", "DELETE"}:
+        return False
+
+    path = request.url.path.rstrip("/")
+    if path == "/messages":
+        return request.method == "POST" and _is_active_legacy_sse_session(
+            request.query_params.get("session_id", "")
+        )
+
+    if path == "/mcp":
+        return _is_active_streamable_http_session(request.headers.get("Mcp-Session-Id", ""))
+
+    return False
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """滑动窗口速率限制，按客户端 IP 计数。"""
 
@@ -840,6 +889,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     2. 请求头：Authorization: Bearer <token>  （兼容旧方式）
 
+    3. 已鉴权 MCP 会话能力：
+       SSE 的 endpoint 事件只携带会话级 session_id，部分客户端不会把
+       初始 URL 中的 apiKey 复制到 /messages/；同理，Streamable HTTP 客户端
+       可能只在首次 POST 携带 apiKey，后续只携带 Mcp-Session-Id。仅对仍处于
+       活动状态的 MCP 会话放行这两类后续请求，不对普通 HTTP 路由放宽鉴权。
+
     /health、/ 允许匿名访问。
     """
 
@@ -848,12 +903,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # 方式一：URL Query 参数
-        if request.query_params.get("apiKey", "") == ADMIN_TOKEN:
+        if _token_matches(request.query_params.get("apiKey", "")):
             return await call_next(request)
 
         # 方式二：Authorization 请求头
         auth_header = request.headers.get("Authorization", "")
-        if auth_header.removeprefix("Bearer ").strip() == ADMIN_TOKEN:
+        if _token_matches(auth_header.removeprefix("Bearer ").strip()):
+            return await call_next(request)
+
+        # 方式三：MCP 会话能力。
+        # 不把 apiKey 注入 endpoint URL，避免长期令牌出现在 URL、代理日志或缓存中。
+        if _is_active_mcp_session_request(request):
             return await call_next(request)
 
         return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
